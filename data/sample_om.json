@@ -1,0 +1,20 @@
+{
+  "property_name": "Oakwood Terrace Apartments",
+  "address": "4521 Oakwood Blvd, Dallas, TX 75219",
+  "total_units": 12,
+  "purchase_price": 2850000,
+  "rent_roll": [
+    {"unit_number": "101", "monthly_rent": 1250, "occupancy_status": "Occupied", "square_footage": 750},
+    {"unit_number": "102", "monthly_rent": 1300, "occupancy_status": "Occupied", "square_footage": 780},
+    {"unit_number": "103", "monthly_rent": 1200, "occupancy_status": "Occupied", "square_footage": 750},
+    {"unit_number": "104", "monthly_rent": 1350, "occupancy_status": "Occupied", "square_footage": 820},
+    {"unit_number": "201", "monthly_rent": 1400, "occupancy_status": "Occupied", "square_footage": 850},
+    {"unit_number": "202", "monthly_rent": 1250, "occupancy_status": "Vacant", "square_footage": 750},
+    {"unit_number": "203", "monthly_rent": 1300, "occupancy_status": "Occupied", "square_footage": 780},
+    {"unit_number": "204", "monthly_rent": 1350, "occupancy_status": "Occupied", "square_footage": 820},
+    {"unit_number": "301", "monthly_rent": 1450, "occupancy_status": "Occupied", "square_footage": 900},
+    {"unit_number": "302", "monthly_rent": 1200, "occupancy_status": "Vacant", "square_footage": 750},
+    {"unit_number": "303", "monthly_rent": 1300, "occupancy_status": "Occupied", "square_footage": 780},
+    {"unit_number": "304", "monthly_rent": 1400, "occupancy_status": "Occupied", "square_footage": 850}
+  ]
+}

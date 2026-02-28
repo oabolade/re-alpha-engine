@@ -1,0 +1,28 @@
+{
+  "property_name": "Magnolia Heights",
+  "address": "3100 Magnolia Ave, Houston, TX 77004",
+  "total_units": 20,
+  "purchase_price": 5200000,
+  "rent_roll": [
+    {"unit_number": "1A", "monthly_rent": 1100, "occupancy_status": "Occupied", "square_footage": 700},
+    {"unit_number": "1B", "monthly_rent": 1150, "occupancy_status": "Occupied", "square_footage": 720},
+    {"unit_number": "1C", "monthly_rent": 1050, "occupancy_status": "Vacant", "square_footage": 680},
+    {"unit_number": "1D", "monthly_rent": 1100, "occupancy_status": "Occupied", "square_footage": 700},
+    {"unit_number": "2A", "monthly_rent": 1200, "occupancy_status": "Occupied", "square_footage": 750},
+    {"unit_number": "2B", "monthly_rent": 1150, "occupancy_status": "Vacant", "square_footage": 720},
+    {"unit_number": "2C", "monthly_rent": 1100, "occupancy_status": "Occupied", "square_footage": 700},
+    {"unit_number": "2D", "monthly_rent": 1200, "occupancy_status": "Occupied", "square_footage": 750},
+    {"unit_number": "3A", "monthly_rent": 1250, "occupancy_status": "Occupied", "square_footage": 780},
+    {"unit_number": "3B", "monthly_rent": 1100, "occupancy_status": "Vacant", "square_footage": 700},
+    {"unit_number": "3C", "monthly_rent": 1150, "occupancy_status": "Occupied", "square_footage": 720},
+    {"unit_number": "3D", "monthly_rent": 1200, "occupancy_status": "Occupied", "square_footage": 750},
+    {"unit_number": "4A", "monthly_rent": 1300, "occupancy_status": "Occupied", "square_footage": 800},
+    {"unit_number": "4B", "monthly_rent": 850, "occupancy_status": "Occupied", "square_footage": 550},
+    {"unit_number": "4C", "monthly_rent": 1150, "occupancy_status": "Occupied", "square_footage": 720},
+    {"unit_number": "4D", "monthly_rent": 1100, "occupancy_status": "Vacant", "square_footage": 700},
+    {"unit_number": "5A", "monthly_rent": 1250, "occupancy_status": "Occupied", "square_footage": 780},
+    {"unit_number": "5B", "monthly_rent": 1100, "occupancy_status": "Occupied", "square_footage": 700},
+    {"unit_number": "5C", "monthly_rent": 900, "occupancy_status": "Vacant", "square_footage": 600},
+    {"unit_number": "5D", "monthly_rent": 1200, "occupancy_status": "Occupied", "square_footage": 750}
+  ]
+}

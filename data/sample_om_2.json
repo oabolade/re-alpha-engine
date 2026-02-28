@@ -1,0 +1,16 @@
+{
+  "property_name": "Pine Valley Residences",
+  "address": "1820 Pine Valley Dr, Austin, TX 78745",
+  "total_units": 8,
+  "purchase_price": 1950000,
+  "rent_roll": [
+    {"unit_number": "A1", "monthly_rent": 1550, "occupancy_status": "Occupied", "square_footage": 900},
+    {"unit_number": "A2", "monthly_rent": 1600, "occupancy_status": "Occupied", "square_footage": 920},
+    {"unit_number": "A3", "monthly_rent": 1500, "occupancy_status": "Occupied", "square_footage": 880},
+    {"unit_number": "A4", "monthly_rent": 1550, "occupancy_status": "Occupied", "square_footage": 900},
+    {"unit_number": "B1", "monthly_rent": 1650, "occupancy_status": "Occupied", "square_footage": 950},
+    {"unit_number": "B2", "monthly_rent": 1600, "occupancy_status": "Occupied", "square_footage": 920},
+    {"unit_number": "B3", "monthly_rent": 1500, "occupancy_status": "Occupied", "square_footage": 880},
+    {"unit_number": "B4", "monthly_rent": 1550, "occupancy_status": "Vacant", "square_footage": 900}
+  ]
+}

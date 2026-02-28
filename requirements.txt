@@ -1,0 +1,10 @@
+anthropic>=0.39.0
+numpy-financial>=1.0.0
+streamlit>=1.40.0
+reka-api>=3.0.0
+tavily-python>=0.7.0
+elevenlabs>=2.0.0
+openai>=1.0.0
+python-dotenv>=1.0.0
+neo4j>=5.0.0
+streamlit-agraph>=0.0.45
