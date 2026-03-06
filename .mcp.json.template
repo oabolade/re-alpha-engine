@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "nevermined-docs": {
+      "type": "http",
+      "url": "https://docs.nevermined.app/mcp"
+    },
+    "apify": {
+      "type": "http",
+      "url": "https://mcp.apify.com",
+      "headers": {
+        "Authorization": "Bearer ${APIFY_API_KEY}"
+      }
+    }
+  }
+}

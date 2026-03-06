@@ -13,9 +13,12 @@ from tools.memo_generator import generate_memo, generate_negotiation_leverage
 from tools.market_intelligence import research_market, format_market_context
 from tools.voice_brief import generate_voice_brief, VOICE_OPTIONS
 from agents.orchestrator import analyze_deal
-from config import TAVILY_API_KEY, ELEVENLABS_API_KEY, OPENAI_API_KEY, NEO4J_URI
+from config import (
+    TAVILY_API_KEY, ELEVENLABS_API_KEY, OPENAI_API_KEY, NEO4J_URI,
+    APIFY_API_KEY, NEVERMINED_API_KEY, EXA_API_KEY,
+)
 
-# Neo4j is optional — only import if configured
+# Optional imports — graceful degradation
 if NEO4J_URI:
     try:
         from tools.knowledge_graph import store_deal, get_full_graph, get_graph_stats, init_constraints
@@ -25,6 +28,72 @@ if NEO4J_URI:
 else:
     NEO4J_AVAILABLE = False
 
+APIFY_AVAILABLE = False
+if APIFY_API_KEY:
+    try:
+        from tools.deal_scraper import scrape_loopnet_deals, scrape_crexi_deals
+        APIFY_AVAILABLE = True
+    except Exception:
+        pass
+
+NEVERMINED_AVAILABLE = False
+if NEVERMINED_API_KEY:
+    try:
+        from tools.nevermined_client import NEVERMINED_AVAILABLE as _nvm
+        NEVERMINED_AVAILABLE = _nvm
+    except Exception:
+        pass
+
+def _scraped_deal_to_om(deal: dict, fallback_location: str = "") -> dict:
+    """Convert a scraped deal dict into an OM-like JSON for the analysis pipeline.
+
+    When individual rent-roll data isn't available (which is typical for
+    scraped listings), synthesise a plausible rent roll using market-rate
+    assumptions so the financial engine can still produce a directional analysis.
+    """
+    property_name = deal.get("property_name", "Scraped Property")
+    address = deal.get("address") or fallback_location or "Unknown"
+    purchase_price = deal.get("purchase_price")
+    total_units = deal.get("total_units") or 0
+
+    if not purchase_price:
+        purchase_price = 0
+    if total_units <= 0:
+        total_units = 10
+
+    avg_rent = _estimate_monthly_rent(purchase_price, total_units)
+    vacancy_pct = 0.07
+
+    rent_roll = []
+    for i in range(total_units):
+        occupied = (i / total_units) >= vacancy_pct
+        rent_roll.append({
+            "unit_number": f"{(i // 4) + 1}{['A','B','C','D'][i % 4]}",
+            "monthly_rent": round(avg_rent + (i % 3) * 25),
+            "occupancy_status": "Occupied" if occupied else "Vacant",
+            "square_footage": 800,
+        })
+
+    return {
+        "property_name": property_name,
+        "address": address,
+        "purchase_price": purchase_price,
+        "total_units": total_units,
+        "rent_roll": rent_roll,
+        "_source": "scraped",
+        "_listing_url": deal.get("listing_url", ""),
+    }
+
+
+def _estimate_monthly_rent(purchase_price: float, units: int) -> float:
+    """Back into per-unit monthly rent from purchase price using a 6% cap rate."""
+    if purchase_price <= 0 or units <= 0:
+        return 1200.0
+    annual_noi_est = purchase_price * 0.06
+    annual_rent_est = annual_noi_est / 0.65
+    return round(annual_rent_est / units / 12, 0)
+
+
 st.set_page_config(page_title="RE Alpha Engine", page_icon="", layout="wide")
 
 st.title("RE Alpha Engine")
@@ -32,14 +101,19 @@ st.markdown("**Institutional Deal Intelligence Agent** — Multifamily Underwrit
 
 # --- Sidebar: Input ---
 st.sidebar.header("Deal Input")
-input_mode = st.sidebar.radio("Input Source", ["Upload PDF", "Sample Deal", "Paste JSON"])
+
+_input_options = ["Upload PDF", "Sample Deal", "Paste JSON"]
+_has_scraped = bool(st.session_state.get("scraped_deals"))
+if _has_scraped:
+    _input_options.append("Scraped Deal")
+
+input_mode = st.sidebar.radio("Input Source", _input_options)
 
 raw_data = None
 
 if input_mode == "Upload PDF":
     uploaded = st.sidebar.file_uploader("Upload Offering Memorandum (PDF)", type=["pdf"])
     if uploaded:
-        # Cache extraction by file hash to avoid re-running on every rerun
         file_bytes = uploaded.read()
         file_hash = hashlib.md5(file_bytes).hexdigest()
 
@@ -73,6 +147,32 @@ elif input_mode == "Paste JSON":
         except json.JSONDecodeError:
             st.sidebar.error("Invalid JSON.")
 
+elif input_mode == "Scraped Deal":
+    scraped = st.session_state.get("scraped_deals", {})
+    all_deals = []
+    for key in ["loopnet", "crexi"]:
+        for d in scraped.get(key, []):
+            if not d.get("error"):
+                all_deals.append(d)
+
+    if all_deals:
+        labels = [f"{d.get('property_name', 'Unknown')[:50]}" for d in all_deals]
+        chosen_idx = st.sidebar.selectbox("Select a scraped deal", range(len(all_deals)), format_func=lambda i: labels[i])
+        chosen = all_deals[chosen_idx]
+
+        st.sidebar.caption(f"Source: {chosen.get('listing_url', 'N/A')[:60]}")
+        price = chosen.get("purchase_price")
+        units = chosen.get("total_units", 0)
+        if price:
+            st.sidebar.caption(f"Price: ${price:,.0f}")
+        if units:
+            st.sidebar.caption(f"Units: {units}")
+
+        raw_data = _scraped_deal_to_om(chosen, scraped.get("location", ""))
+        st.sidebar.success("Scraped deal loaded — estimates applied for missing rent roll data.")
+    else:
+        st.sidebar.info("No valid deals found. Scrape a location first.")
+
 # --- Sidebar: Assumption Overrides ---
 st.sidebar.header("Assumptions")
 rent_growth = st.sidebar.slider("Rent Growth (%)", 0.0, 8.0, 3.0, 0.5) / 100
@@ -89,6 +189,20 @@ custom_assumptions = {
     "hold_period": hold_period,
 }
 
+# --- Sidebar: Deal Scraping ---
+if APIFY_AVAILABLE:
+    st.sidebar.header("Deal Pipeline")
+    scrape_location = st.sidebar.text_input("Scrape Location", placeholder="Dallas, TX")
+    if scrape_location and st.sidebar.button("Scrape Deals"):
+        with st.spinner(f"Scraping deals in {scrape_location}..."):
+            loopnet_deals = scrape_loopnet_deals(scrape_location)
+            crexi_deals = scrape_crexi_deals(scrape_location)
+        st.session_state["scraped_deals"] = {
+            "loopnet": loopnet_deals,
+            "crexi": crexi_deals,
+            "location": scrape_location,
+        }
+
 # --- Analysis Mode ---
 use_agent = st.sidebar.checkbox("Use Agent Orchestration", value=False,
                                  help="Run full Claude agent loop with tool-use (slower, more detailed)")
@@ -103,8 +217,8 @@ if raw_data and st.sidebar.button("Analyze Deal", type="primary"):
         scenarios = results["scenario_results"]
         leverage = results["negotiation_points"]
         memo = results["memo"]
-        market_data = None
-        market_context = ""
+        market_data = results.get("market_data")
+        market_context = format_market_context(market_data) if market_data else ""
     else:
         with st.spinner("Running analysis pipeline..."):
             normalized = normalize_rent_roll(raw_data)
@@ -114,8 +228,8 @@ if raw_data and st.sidebar.button("Analyze Deal", type="primary"):
 
         market_data = None
         market_context = ""
-        if TAVILY_API_KEY:
-            with st.spinner("Researching market intelligence via Tavily..."):
+        if TAVILY_API_KEY or NEVERMINED_AVAILABLE:
+            with st.spinner("Researching market intelligence..."):
                 market_data = research_market(normalized.get("address", ""))
                 market_context = format_market_context(market_data)
 
@@ -123,14 +237,17 @@ if raw_data and st.sidebar.button("Analyze Deal", type="primary"):
             memo = generate_memo(normalized, financials, scenarios, leverage, market_context)
 
     # Store to Neo4j knowledge graph
+    intelligence_purchases = []
+    if market_data:
+        intelligence_purchases = market_data.get("purchases", [])
     if NEO4J_AVAILABLE:
         try:
             init_constraints()
-            store_deal(normalized, financials, scenarios, market_data, leverage)
+            store_deal(normalized, financials, scenarios, market_data, leverage, intelligence_purchases)
         except Exception as e:
             st.warning(f"Knowledge graph storage failed: {e}")
 
-    # Store all results in session state — no recomputation needed
+    # Store all results in session state
     st.session_state["results"] = {
         "normalized": normalized,
         "financials": financials,
@@ -139,8 +256,10 @@ if raw_data and st.sidebar.button("Analyze Deal", type="primary"):
         "market_data": market_data,
         "market_context": market_context,
         "memo": memo,
+        "intelligence_purchases": intelligence_purchases,
+        "_source": raw_data.get("_source") if isinstance(raw_data, dict) else None,
+        "_listing_url": raw_data.get("_listing_url", "") if isinstance(raw_data, dict) else "",
     }
-    # Clear voice brief from previous run
     st.session_state.pop("voice_brief", None)
     st.session_state.pop("voice_audio", None)
 
@@ -168,6 +287,17 @@ if "results" in st.session_state:
     st.header(normalized.get("property_name", "Deal Analysis"))
     st.caption(normalized.get("address", ""))
 
+    # Scraped-deal banner
+    if r.get("_source") == "scraped":
+        listing_url = r.get("_listing_url", "")
+        st.info(
+            "This analysis was generated from a **scraped deal listing**. "
+            "Rent-roll data is estimated using market assumptions (6% cap rate, "
+            "65% expense ratio). For precise underwriting, upload the actual OM."
+            + (f"  \n[View original listing]({listing_url})" if listing_url else ""),
+            icon="ℹ️",
+        )
+
     # Warnings
     if normalized.get("warnings"):
         for w in normalized["warnings"]:
@@ -177,8 +307,11 @@ if "results" in st.session_state:
         st.warning(financials["error"])
 
     # Tabs
-    tab_names = ["Summary", "Financial Detail", "Scenarios", "Market Intel", "Negotiation", "Investment Memo", "Knowledge Graph"]
-    tab1, tab2, tab3, tab_market, tab4, tab5, tab_graph = st.tabs(tab_names)
+    tab_names = [
+        "Summary", "Financial Detail", "Scenarios", "Market Intel",
+        "Negotiation", "Investment Memo", "Deal Pipeline", "Agent Network", "Knowledge Graph",
+    ]
+    tab1, tab2, tab3, tab_market, tab4, tab5, tab_pipeline, tab_network, tab_graph = st.tabs(tab_names)
 
     with tab1:
         col1, col2, col3, col4 = st.columns(4)
@@ -234,6 +367,28 @@ if "results" in st.session_state:
 
     with tab_market:
         st.subheader("Market Intelligence")
+        # Show intelligence source badge
+        if market_data:
+            source = market_data.get("intelligence_source", "unknown")
+            if source == "nevermined":
+                st.success("Source: Nevermined Agent Network")
+            elif source == "tavily":
+                st.info("Source: Tavily Search")
+            else:
+                st.warning("Source: None available")
+
+            # Show purchase receipts if Nevermined was used
+            purchases = market_data.get("purchases", [])
+            if purchases:
+                st.subheader("Intelligence Purchases")
+                for p in purchases:
+                    st.markdown(
+                        f"- **{p.get('provider_name', 'Unknown')}** — "
+                        f"Cost: ${p.get('cost', 0):.2f} — "
+                        f"TXN: `{p.get('transaction_id', 'N/A')[:16]}...`"
+                    )
+                st.divider()
+
         if market_data and market_data.get("research"):
             st.caption(f"Market: {market_data.get('market', 'N/A')} | Asset Type: {market_data.get('asset_type', 'N/A')}")
             research = market_data["research"]
@@ -258,8 +413,8 @@ if "results" in st.session_state:
                         for s in sources:
                             if s.get("title") and s.get("url"):
                                 st.markdown(f"- [{s['title']}]({s['url']})")
-        elif not TAVILY_API_KEY:
-            st.info("Market intelligence unavailable — TAVILY_API_KEY not set.")
+        elif not TAVILY_API_KEY and not NEVERMINED_AVAILABLE:
+            st.info("Market intelligence unavailable — set TAVILY_API_KEY or NEVERMINED_API_KEY.")
         else:
             st.info("No market data available for this property.")
 
@@ -303,6 +458,86 @@ if "results" in st.session_state:
         else:
             st.info("Memo not generated.")
 
+    with tab_pipeline:
+        st.subheader("Deal Pipeline")
+        scraped = st.session_state.get("scraped_deals")
+        if scraped:
+            st.caption(f"Location: {scraped.get('location', 'N/A')}")
+            st.info(
+                'To analyze a scraped deal, select **"Scraped Deal"** '
+                "from the **Deal Input** source in the sidebar, then click **Analyze Deal**.",
+                icon="💡",
+            )
+
+            for source_name, source_key in [("Deal Listings", "loopnet"), ("Investment Properties", "crexi")]:
+                deals = scraped.get(source_key, [])
+                if deals and not (len(deals) == 1 and deals[0].get("error")):
+                    st.markdown(f"### {source_name} ({len(deals)} results)")
+                    for d in deals:
+                        title = d.get("property_name", "N/A")
+                        url = d.get("listing_url", "")
+                        address = d.get("address", "")
+                        price = d.get("purchase_price")
+                        units = d.get("total_units", 0)
+                        preview = d.get("content_preview", "")
+
+                        col_a, col_b = st.columns([3, 1])
+                        with col_a:
+                            if url:
+                                st.markdown(f"**[{title}]({url})**")
+                            else:
+                                st.markdown(f"**{title}**")
+                            if address:
+                                st.caption(address)
+                        with col_b:
+                            if price:
+                                st.metric("Price", _fmt_dollar(price))
+                            if units:
+                                st.metric("Units", units)
+
+                        if preview:
+                            with st.expander("Content preview"):
+                                st.markdown(preview[:400])
+                        st.divider()
+                elif deals and deals[0].get("error"):
+                    st.warning(f"{source_name}: {deals[0]['error']}")
+        elif not APIFY_AVAILABLE:
+            st.info("Deal scraping unavailable — set APIFY_API_KEY and install apify-client.")
+        else:
+            st.info("Use the sidebar to scrape deals for a location.")
+
+    with tab_network:
+        st.subheader("Agent Network")
+
+        # Registration status
+        if NEVERMINED_AVAILABLE:
+            st.success("Nevermined: Connected")
+            from config import NEVERMINED_AGENT_DID, NEVERMINED_ENVIRONMENT
+            st.markdown(f"**Environment:** {NEVERMINED_ENVIRONMENT}")
+            if NEVERMINED_AGENT_DID:
+                st.markdown(f"**Agent DID:** `{NEVERMINED_AGENT_DID[:24]}...`")
+            else:
+                st.info("Agent not registered — run `python -m api.register_service` to register.")
+        else:
+            st.info("Nevermined not connected — set NEVERMINED_API_KEY to join the agent network.")
+
+        # Intelligence purchases summary
+        purchases = r.get("intelligence_purchases", [])
+        if purchases:
+            st.subheader("Intelligence Purchases")
+            total_cost = sum(p.get("cost", 0) for p in purchases)
+            st.metric("Total Spend", f"${total_cost:.2f}")
+            st.metric("Purchases", len(purchases))
+
+            for p in purchases:
+                st.markdown(
+                    f"- **{p.get('provider_name', 'Unknown')}** "
+                    f"(DID: `{p.get('provider_did', 'N/A')[:16]}...`) — "
+                    f"${p.get('cost', 0):.2f}"
+                )
+        else:
+            st.info("No intelligence purchased in this session.")
+
     with tab_graph:
         st.subheader("Knowledge Graph")
         if not NEO4J_AVAILABLE:
@@ -327,13 +562,14 @@ if "results" in st.session_state:
                 else:
                     # --- Visual Design System ---
                     color_map = {
-                        "Property":          {"background": "#E74C3C", "border": "#C0392B", "font": "#FFFFFF"},
-                        "Submarket":         {"background": "#1ABC9C", "border": "#16A085", "font": "#FFFFFF"},
-                        "City":              {"background": "#2980B9", "border": "#1F6DA0", "font": "#FFFFFF"},
-                        "FinancialSnapshot": {"background": "#27AE60", "border": "#1E8449", "font": "#FFFFFF"},
-                        "MarketTrend":       {"background": "#F39C12", "border": "#D68910", "font": "#1A1A1A"},
-                        "Scenario":          {"background": "#8E44AD", "border": "#6C3483", "font": "#FFFFFF"},
-                        "LeveragePoint":     {"background": "#E67E22", "border": "#CA6F1E", "font": "#FFFFFF"},
+                        "Property":              {"background": "#E74C3C", "border": "#C0392B", "font": "#FFFFFF"},
+                        "Submarket":             {"background": "#1ABC9C", "border": "#16A085", "font": "#FFFFFF"},
+                        "City":                  {"background": "#2980B9", "border": "#1F6DA0", "font": "#FFFFFF"},
+                        "FinancialSnapshot":     {"background": "#27AE60", "border": "#1E8449", "font": "#FFFFFF"},
+                        "MarketTrend":           {"background": "#F39C12", "border": "#D68910", "font": "#1A1A1A"},
+                        "Scenario":              {"background": "#8E44AD", "border": "#6C3483", "font": "#FFFFFF"},
+                        "LeveragePoint":         {"background": "#E67E22", "border": "#CA6F1E", "font": "#FFFFFF"},
+                        "IntelligencePurchase":  {"background": "#3498DB", "border": "#2176AE", "font": "#FFFFFF"},
                     }
                     size_map = {
                         "City": 40,
@@ -343,6 +579,7 @@ if "results" in st.session_state:
                         "FinancialSnapshot": 20,
                         "Scenario": 18,
                         "LeveragePoint": 16,
+                        "IntelligencePurchase": 18,
                     }
                     shape_map = {
                         "City": "dot",
@@ -352,6 +589,7 @@ if "results" in st.session_state:
                         "MarketTrend": "triangle",
                         "Scenario": "star",
                         "LeveragePoint": "triangleDown",
+                        "IntelligencePurchase": "hexagon",
                     }
 
                     # --- Build readable labels and rich tooltips ---
@@ -382,6 +620,10 @@ if "results" in st.session_state:
                             return cat[:25]
                         if t == "LeveragePoint":
                             return p.get("text", "")[:25] + "..."
+                        if t == "IntelligencePurchase":
+                            name = p.get("provider_name", "Intel")[:15]
+                            cost = p.get("cost", 0)
+                            return f"{name} ${cost:.2f}"
                         return n["label"][:25]
 
                     def _node_tooltip(n):
@@ -420,6 +662,11 @@ if "results" in st.session_state:
                                 lines.append(f"{summary[:200]}...")
                         elif t == "LeveragePoint":
                             lines.append(p.get("text", ""))
+                        elif t == "IntelligencePurchase":
+                            lines.append(f"Provider: {p.get('provider_name', 'N/A')}")
+                            lines.append(f"Cost: ${p.get('cost', 0):.2f}")
+                            lines.append(f"DID: {p.get('provider_did', 'N/A')[:24]}...")
+                            lines.append(f"TXN: {p.get('transaction_id', 'N/A')[:24]}...")
                         else:
                             for k, v in p.items():
                                 if k != "timestamp":
@@ -435,6 +682,7 @@ if "results" in st.session_state:
                         "HAS_TREND": "trend",
                         "HAS_LEVERAGE": "leverage",
                         "COMPARABLE_TO": "comparable",
+                        "HAS_INTELLIGENCE": "intelligence",
                     }
                     edge_colors = {
                         "LOCATED_IN": "#7F8C8D",
@@ -444,6 +692,7 @@ if "results" in st.session_state:
                         "HAS_TREND": "#F39C12",
                         "HAS_LEVERAGE": "#E67E22",
                         "COMPARABLE_TO": "#E74C3C",
+                        "HAS_INTELLIGENCE": "#3498DB",
                     }
 
                     nodes = []
@@ -511,6 +760,7 @@ if "results" in st.session_state:
                         ("Market Trend", "triangle", color_map["MarketTrend"]["background"]),
                         ("Scenario", "star", color_map["Scenario"]["background"]),
                         ("Leverage", "triangle", color_map["LeveragePoint"]["background"]),
+                        ("Intelligence", "hexagon", color_map["IntelligencePurchase"]["background"]),
                     ]
                     legend_html = " &nbsp;&nbsp; ".join(
                         f'<span style="display:inline-flex; align-items:center; margin-right:8px;">'
@@ -527,3 +777,40 @@ if "results" in st.session_state:
 
 elif not raw_data:
     st.info("Select a deal input from the sidebar to begin analysis.")
+
+# --- Standalone Deal Pipeline (before any analysis is run) ---
+if "results" not in st.session_state and st.session_state.get("scraped_deals"):
+    st.markdown("---")
+    st.subheader("Scraped Deal Pipeline")
+    scraped = st.session_state["scraped_deals"]
+    st.caption(f"Location: {scraped.get('location', 'N/A')}")
+    st.info(
+        'Select **"Scraped Deal"** from the **Deal Input** source in the sidebar, '
+        "pick a deal, then click **Analyze Deal** to run underwriting.",
+        icon="💡",
+    )
+
+    for source_name, source_key in [("Deal Listings", "loopnet"), ("Investment Properties", "crexi")]:
+        deals = scraped.get(source_key, [])
+        if deals and not (len(deals) == 1 and deals[0].get("error")):
+            st.markdown(f"### {source_name} ({len(deals)} results)")
+            for d in deals:
+                title = d.get("property_name", "N/A")
+                url = d.get("listing_url", "")
+                price = d.get("purchase_price")
+                units = d.get("total_units", 0)
+
+                col_a, col_b = st.columns([3, 1])
+                with col_a:
+                    if url:
+                        st.markdown(f"**[{title}]({url})**")
+                    else:
+                        st.markdown(f"**{title}**")
+                with col_b:
+                    if price:
+                        st.metric("Price", _fmt_dollar(price))
+                    if units:
+                        st.metric("Units", units)
+                st.divider()
+        elif deals and deals[0].get("error"):
+            st.warning(f"{source_name}: {deals[0]['error']}")

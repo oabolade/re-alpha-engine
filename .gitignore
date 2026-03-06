@@ -4,4 +4,35 @@ __pycache__/
 .env
 .DS_Store
 *.tmp
+*.log
 .streamlit/secrets.toml
+
+# Credentials — NEVER COMMIT
+.mcp.json
+*.pem
+*.key
+credentials.json
+
+# Large generated content
+content/
+
+# Instance-specific directories
+.npm/
+.ssh/
+.trinity/
+.cache/
+
+# Instance-specific files
+.claude.json
+.claude.json.backup
+.sudo_as_admin_successful
+
+# Claude Code — commit commands/skills, exclude runtime data
+.claude/projects/
+.claude/statsig/
+.claude/todos/
+.claude/debug/
+
+# Keep these committed:
+!.env.example
+!.mcp.json.template

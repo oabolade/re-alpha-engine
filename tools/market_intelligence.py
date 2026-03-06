@@ -1,4 +1,7 @@
-"""Market Intelligence Layer — Tavily-powered research for micro-market context.
+"""Market Intelligence Layer — Nevermined-first with Tavily fallback.
+
+Tries Nevermined agent network for market intelligence first.
+Falls back to Tavily-powered research if Nevermined unavailable or returns no results.
 
 Runs 4 targeted queries after extraction once city/submarket/asset type are known:
   1. Rent growth trends
@@ -10,22 +13,26 @@ Runs 4 targeted queries after extraction once city/submarket/asset type are know
 import re
 from tavily import TavilyClient
 
-from config import TAVILY_API_KEY
+from config import TAVILY_API_KEY, NEVERMINED_API_KEY, INTELLIGENCE_BUDGET_PER_QUERY
+from tools.nevermined_client import (
+    NEVERMINED_AVAILABLE,
+    search_providers,
+    evaluate_providers,
+    purchase_intelligence,
+)
 
 CURRENT_YEAR = 2025
 
 
-def _get_client() -> TavilyClient:
+def _get_tavily_client() -> TavilyClient:
     return TavilyClient(api_key=TAVILY_API_KEY)
 
 
 def _extract_city_state(address: str) -> tuple[str, str]:
     """Pull city and state from an address string."""
-    # Try "City, ST ZIP" or "City, ST"
     match = re.search(r"([A-Za-z\s]+),\s*([A-Z]{2})\s*\d*", address)
     if match:
         return match.group(1).strip(), match.group(2).strip()
-    # Fallback: return last two comma-separated parts
     parts = [p.strip() for p in address.split(",")]
     if len(parts) >= 2:
         return parts[-2], parts[-1].split()[0] if parts[-1] else ""
@@ -33,11 +40,84 @@ def _extract_city_state(address: str) -> tuple[str, str]:
 
 
 def research_market(address: str, asset_type: str = "multifamily") -> dict:
-    """Run 4 Tavily searches for market intelligence. Returns structured results."""
+    """Run market intelligence research. Tries Nevermined first, falls back to Tavily.
+
+    Returns structured results including intelligence_source and purchases list.
+    """
     city, state = _extract_city_state(address)
     market = f"{city}, {state}" if state else city
 
-    client = _get_client()
+    # Try Nevermined first
+    nvm_result = _research_via_nevermined(market, asset_type)
+    if nvm_result and nvm_result.get("research"):
+        return nvm_result
+
+    # Fall back to Tavily
+    tavily_result = _research_via_tavily(market, asset_type)
+    return tavily_result
+
+
+def _research_via_nevermined(market: str, asset_type: str) -> dict | None:
+    """Attempt to acquire market intelligence via Nevermined agent network."""
+    if not NEVERMINED_AVAILABLE or not NEVERMINED_API_KEY:
+        return None
+
+    try:
+        query = f"{asset_type} market intelligence {market}"
+        providers = search_providers(query, category="market_intelligence")
+
+        if not providers or (len(providers) == 1 and providers[0].get("error")):
+            return None
+
+        # Evaluate and pick best provider within budget
+        affordable = evaluate_providers(providers, INTELLIGENCE_BUDGET_PER_QUERY)
+        if not affordable:
+            return None
+
+        best = affordable[0]
+        result = purchase_intelligence(
+            provider_did=best["did"],
+            query_params={
+                "market": market,
+                "asset_type": asset_type,
+                "queries": ["rent_growth", "cap_rates", "comparable_sales", "supply_pipeline"],
+            },
+        )
+
+        if result.get("error") or not result.get("data"):
+            return None
+
+        data = result["data"]
+        research = data if isinstance(data, dict) else {}
+
+        return {
+            "market": market,
+            "asset_type": asset_type,
+            "research": research.get("research", research),
+            "intelligence_source": "nevermined",
+            "purchases": [{
+                "provider_did": result["provider_did"],
+                "provider_name": best.get("name", "Unknown"),
+                "cost": result.get("cost", 0),
+                "transaction_id": result.get("transaction_id", ""),
+            }],
+        }
+    except Exception:
+        return None
+
+
+def _research_via_tavily(market: str, asset_type: str) -> dict:
+    """Fall back to Tavily-powered market research."""
+    if not TAVILY_API_KEY:
+        return {
+            "market": market,
+            "asset_type": asset_type,
+            "research": {},
+            "intelligence_source": "none",
+            "purchases": [],
+        }
+
+    client = _get_tavily_client()
 
     queries = {
         "rent_growth": f"{asset_type} rent growth trends in {market} {CURRENT_YEAR}",
@@ -70,6 +150,8 @@ def research_market(address: str, asset_type: str = "multifamily") -> dict:
         "market": market,
         "asset_type": asset_type,
         "research": results,
+        "intelligence_source": "tavily",
+        "purchases": [],
     }
 
 

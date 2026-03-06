@@ -1,0 +1,93 @@
+name: re-alpha-engine
+display_name: "RE Alpha Engine"
+description: |
+  Institutional-grade multifamily deal intelligence agent.
+  Accepts offering memorandum data or scraped deal listings and returns
+  normalized rent rolls, 8-step financial modeling (NOI, cap rate, IRR, DSCR),
+  bull/base/bear scenarios, negotiation leverage, market intelligence, and
+  investment memos. Participates in the Nevermined agent economy as both
+  a buyer (purchasing market intelligence) and seller (monetizing analysis).
+
+version: "1.0"
+author: "Olasile Abolade"
+updated: "2026-03-05"
+tagline: "Autonomous multifamily underwriting — buy intel, sell analysis"
+
+resources:
+  cpu: "2"
+  memory: "4g"
+
+runtime:
+  type: claude-code
+
+credentials:
+  env_file:
+    - ANTHROPIC_API_KEY
+    - REKA_API_KEY
+    - TAVILY_API_KEY
+    - ELEVENLABS_API_KEY
+    - OPENAI_API_KEY
+    - NEVERMINED_API_KEY
+    - NEVERMINED_ENVIRONMENT
+    - NEVERMINED_AGENT_DID
+    - APIFY_API_KEY
+    - EXA_API_KEY
+    - NEO4J_URI
+    - NEO4J_USER
+    - NEO4J_PASSWORD
+
+capabilities:
+  - rent_roll_normalization
+  - financial_modeling
+  - scenario_analysis
+  - market_intelligence
+  - deal_scraping
+  - memo_generation
+  - negotiation_leverage
+  - voice_briefing
+  - nevermined_monetization
+
+use_cases:
+  - "Analyze this multifamily offering memorandum"
+  - "Scrape deals in Dallas, TX and run underwriting"
+  - "Generate an investment memo for a 50-unit apartment complex"
+  - "What is the IRR on a $2.8M property at 6.5% cap rate?"
+
+metrics:
+  - name: deals_analyzed
+    type: counter
+    label: "Deals Analyzed"
+    description: "Total deals underwritten"
+
+  - name: intelligence_purchased
+    type: counter
+    label: "Intel Purchases"
+    description: "Market intelligence purchases via Nevermined"
+
+  - name: deals_scraped
+    type: counter
+    label: "Deals Scraped"
+    description: "Deal listings discovered via Apify"
+
+  - name: agent_status
+    type: status
+    label: "Status"
+    values:
+      - value: "active"
+        color: "green"
+        label: "Active"
+      - value: "analyzing"
+        color: "blue"
+        label: "Analyzing"
+      - value: "idle"
+        color: "gray"
+        label: "Idle"
+
+  - name: avg_analysis_time
+    type: duration
+    label: "Avg Analysis Time"
+    description: "Average time per deal analysis"
+
+platforms:
+  - trinity
+  - local

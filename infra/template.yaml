@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: RE Alpha Engine — Multifamily Underwriting Intelligence API
+
+Globals:
+  Function:
+    Timeout: 120
+    MemorySize: 512
+    Runtime: python3.12
+
+Parameters:
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+  TavilyApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+  NeverminedApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+  NeverminedEnvironment:
+    Type: String
+    Default: staging
+    AllowedValues:
+      - staging
+      - production
+  S3BucketName:
+    Type: String
+    Default: re-alpha-engine-data
+
+Resources:
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  ReAlphaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: api.lambda_handler.handler
+      CodeUri: ../
+      Description: RE Alpha Engine API — FastAPI via Mangum
+      Environment:
+        Variables:
+          ANTHROPIC_API_KEY: !Ref AnthropicApiKey
+          TAVILY_API_KEY: !Ref TavilyApiKey
+          NEVERMINED_API_KEY: !Ref NeverminedApiKey
+          NEVERMINED_ENVIRONMENT: !Ref NeverminedEnvironment
+          AWS_S3_BUCKET: !Ref S3BucketName
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref S3BucketName
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+        Health:
+          Type: HttpApi
+          Properties:
+            Path: /health
+            Method: GET
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  DataBucketName:
+    Description: S3 bucket for analysis data
+    Value: !Ref DataBucket
+  FunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt ReAlphaFunction.Arn

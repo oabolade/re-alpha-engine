@@ -9,6 +9,7 @@ Node types:
   - City (name, state)
   - FinancialSnapshot (noi, cap_rate, irr, coc, dscr, timestamp)
   - MarketTrend (category, summary, source)
+  - IntelligencePurchase (provider_did, provider_name, cost, transaction_id, timestamp)
 
 Relationship types:
   - LOCATED_IN (Property -> Submarket)
@@ -16,6 +17,7 @@ Relationship types:
   - HAS_FINANCIALS (Property -> FinancialSnapshot)
   - HAS_TREND (City -> MarketTrend)
   - COMPARABLE_TO (Property -> Property)
+  - HAS_INTELLIGENCE (Property -> IntelligencePurchase)
 """
 
 import re
@@ -59,6 +61,7 @@ def store_deal(
     scenario_results: dict | None = None,
     market_data: dict | None = None,
     leverage_points: list[str] | None = None,
+    intelligence_purchases: list[dict] | None = None,
 ):
     """Store a complete deal analysis into the knowledge graph."""
     driver = _get_driver()
@@ -174,6 +177,24 @@ def store_deal(
                     ts=timestamp,
                 )
 
+        # Store intelligence purchases
+        if intelligence_purchases:
+            for purchase in intelligence_purchases:
+                session.run(
+                    "MATCH (p:Property {address: $address}) "
+                    "CREATE (i:IntelligencePurchase {"
+                    "  provider_did: $provider_did, provider_name: $provider_name, "
+                    "  cost: $cost, transaction_id: $txn_id, timestamp: $ts"
+                    "}) "
+                    "MERGE (p)-[:HAS_INTELLIGENCE]->(i)",
+                    address=address,
+                    provider_did=purchase.get("provider_did", ""),
+                    provider_name=purchase.get("provider_name", "Unknown"),
+                    cost=purchase.get("cost", 0),
+                    txn_id=purchase.get("transaction_id", ""),
+                    ts=timestamp,
+                )
+
     driver.close()
 
 
@@ -210,7 +231,7 @@ def get_full_graph() -> dict:
         result = session.run(
             "MATCH (n) "
             "WHERE n:Property OR n:Submarket OR n:City OR n:FinancialSnapshot "
-            "   OR n:MarketTrend OR n:Scenario OR n:LeveragePoint "
+            "   OR n:MarketTrend OR n:Scenario OR n:LeveragePoint OR n:IntelligencePurchase "
             "RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props "
             "LIMIT 200"
         )
@@ -239,9 +260,9 @@ def get_full_graph() -> dict:
         result = session.run(
             "MATCH (a)-[r]->(b) "
             "WHERE (a:Property OR a:Submarket OR a:City OR a:FinancialSnapshot "
-            "   OR a:MarketTrend OR a:Scenario OR a:LeveragePoint) "
+            "   OR a:MarketTrend OR a:Scenario OR a:LeveragePoint OR a:IntelligencePurchase) "
             "AND (b:Property OR b:Submarket OR b:City OR b:FinancialSnapshot "
-            "   OR b:MarketTrend OR b:Scenario OR b:LeveragePoint) "
+            "   OR b:MarketTrend OR b:Scenario OR b:LeveragePoint OR b:IntelligencePurchase) "
             "RETURN elementId(a) AS source, elementId(b) AS target, type(r) AS rel_type "
             "LIMIT 500"
         )
