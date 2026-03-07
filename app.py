@@ -250,9 +250,9 @@ if raw_data and st.sidebar.button("Analyze Deal", type="primary"):
 
     if use_agent:
         with st.status("RE Alpha Autonomous Agent Activity", expanded=True) as _status:
-            _step = 0
+            _step = [0]
             def _log(msg):
-                nonlocal _step; _step += 1; st.write(f"[{_step}] {msg}")
+                _step[0] += 1; st.write(f"[{_step[0]}] {msg}")
 
             _log(f"OM uploaded: {_deal_name}")
             results = analyze_deal(raw_data)
@@ -267,9 +267,9 @@ if raw_data and st.sidebar.button("Analyze Deal", type="primary"):
         market_context = format_market_context(market_data) if market_data else ""
     else:
         with st.status("RE Alpha Autonomous Agent Activity", expanded=True) as _status:
-            _step = 0
+            _step = [0]
             def _log(msg):
-                nonlocal _step; _step += 1; st.write(f"[{_step}] {msg}")
+                _step[0] += 1; st.write(f"[{_step[0]}] {msg}")
 
             _log(f"OM uploaded: {_deal_name}")
 
