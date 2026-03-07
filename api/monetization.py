@@ -162,6 +162,54 @@ async def get_result(
     )
 
 
+class AskRequest(BaseModel):
+    query: str = Field(..., description="Plain-text query for the agent")
+
+
+@app.post("/ask")
+async def ask(
+    request: AskRequest,
+    authorization: str | None = Header(None),
+):
+    """Simple query endpoint compatible with the Nevermined agent network.
+
+    Accepts a plain-text query and returns a text response. Supports both
+    Bearer token auth (x402/Nevermined) and unauthenticated requests.
+    """
+    query = request.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Query must not be empty")
+
+    # For now, return agent capabilities and a directed response.
+    # When a full OM payload is needed, clients should use /api/v1/analyze.
+    return {
+        "agent": "re-alpha-engine",
+        "query": query,
+        "response": (
+            "RE Alpha Engine is an institutional multifamily underwriting agent. "
+            "I can analyze offering memorandums, run financial models (NOI, cap rate, "
+            "IRR, DSCR, cash-on-cash), generate scenario analysis, research market "
+            "intelligence, and produce investment memos. "
+            "Send a full deal payload to POST /api/v1/analyze for complete underwriting."
+        ),
+        "capabilities": [
+            "rent_roll_normalization",
+            "financial_modeling",
+            "scenario_analysis",
+            "market_intelligence",
+            "deal_scraping",
+            "memo_generation",
+            "negotiation_leverage",
+        ],
+        "endpoints": {
+            "analyze": "POST /api/v1/analyze",
+            "status": "GET /api/v1/status/{job_id}",
+            "result": "GET /api/v1/result/{job_id}",
+            "ask": "POST /ask",
+        },
+    }
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "re-alpha-engine", "version": "2.0.0"}

@@ -21,7 +21,7 @@ from tools.nevermined_client import (
     purchase_intelligence,
 )
 
-CURRENT_YEAR = 2025
+CURRENT_YEAR = 2026
 
 
 def _get_tavily_client() -> TavilyClient:

@@ -15,8 +15,9 @@ from tools.voice_brief import generate_voice_brief, VOICE_OPTIONS
 from agents.orchestrator import analyze_deal
 from config import (
     TAVILY_API_KEY, ELEVENLABS_API_KEY, OPENAI_API_KEY, NEO4J_URI,
-    APIFY_API_KEY, NEVERMINED_API_KEY, EXA_API_KEY,
+    APIFY_API_KEY, NEVERMINED_API_KEY, EXA_API_KEY, ZEROCLICK_API_KEY,
 )
+from tools.zeroclick_ads import ZEROCLICK_AVAILABLE, fetch_offers, track_impression
 
 # Optional imports — graceful degradation
 if NEO4J_URI:
@@ -122,7 +123,12 @@ if input_mode == "Upload PDF":
                 tmp.write(file_bytes)
                 tmp_path = tmp.name
             with st.spinner("Extracting data from PDF..."):
-                raw_data = extract_from_pdf(tmp_path)
+                try:
+                    raw_data = extract_from_pdf(tmp_path)
+                except (ValueError, Exception) as e:
+                    os.unlink(tmp_path)
+                    st.error(f"PDF extraction failed: {e}")
+                    st.stop()
             os.unlink(tmp_path)
             st.session_state["pdf_hash"] = file_hash
             st.session_state["pdf_raw_data"] = raw_data
@@ -203,15 +209,55 @@ if APIFY_AVAILABLE:
             "location": scrape_location,
         }
 
+# --- Sidebar: Sponsored ---
+if ZEROCLICK_AVAILABLE:
+    try:
+        _sidebar_offers = fetch_offers(
+            query="commercial real estate investment services",
+            context="Real estate underwriting platform for institutional multifamily deals",
+            limit=1,
+        )
+        if _sidebar_offers:
+            st.sidebar.markdown("---")
+            st.sidebar.caption("Sponsored")
+            for _offer in _sidebar_offers:
+                _title = _offer.get("title", "")
+                _subtitle = _offer.get("subtitle", "")
+                _cta = _offer.get("cta", "Learn More")
+                _url = _offer.get("click_url", "")
+                _brand = _offer.get("brand", "")
+                _card = f"**{_title}**"
+                if _subtitle:
+                    _card += f"  \n{_subtitle}"
+                if _brand:
+                    _card += f"  \n*{_brand}*"
+                if _url:
+                    _card += f"  \n[{_cta}]({_url})"
+                st.sidebar.markdown(_card)
+            _offer_ids = [o.get("id") for o in _sidebar_offers if o.get("id")]
+            if _offer_ids:
+                track_impression(_offer_ids)
+    except Exception:
+        pass
+
 # --- Analysis Mode ---
 use_agent = st.sidebar.checkbox("Use Agent Orchestration", value=False,
                                  help="Run full Claude agent loop with tool-use (slower, more detailed)")
 
 # --- Run Analysis ---
 if raw_data and st.sidebar.button("Analyze Deal", type="primary"):
+    _deal_name = raw_data.get("property_name", "Deal") if isinstance(raw_data, dict) else "Deal"
+
     if use_agent:
-        with st.spinner("Agent analyzing deal..."):
+        with st.status("RE Alpha Autonomous Agent Activity", expanded=True) as _status:
+            _step = 0
+            def _log(msg):
+                nonlocal _step; _step += 1; st.write(f"[{_step}] {msg}")
+
+            _log(f"OM uploaded: {_deal_name}")
             results = analyze_deal(raw_data)
+            _log("Agent analysis complete")
+            _status.update(label="Analysis complete", state="complete", expanded=False)
         normalized = results["normalized_data"]
         financials = results["financial_results"]
         scenarios = results["scenario_results"]
@@ -220,21 +266,45 @@ if raw_data and st.sidebar.button("Analyze Deal", type="primary"):
         market_data = results.get("market_data")
         market_context = format_market_context(market_data) if market_data else ""
     else:
-        with st.spinner("Running analysis pipeline..."):
+        with st.status("RE Alpha Autonomous Agent Activity", expanded=True) as _status:
+            _step = 0
+            def _log(msg):
+                nonlocal _step; _step += 1; st.write(f"[{_step}] {msg}")
+
+            _log(f"OM uploaded: {_deal_name}")
+
+            _log("Extracting financial data...")
             normalized = normalize_rent_roll(raw_data)
+
+            _log("Running IRR model...")
             financials = run_financial_model(normalized, custom_assumptions)
             scenarios = run_scenarios(normalized)
             leverage = generate_negotiation_leverage(normalized, financials)
 
-        market_data = None
-        market_context = ""
-        if TAVILY_API_KEY or NEVERMINED_AVAILABLE:
-            with st.spinner("Researching market intelligence..."):
+            market_data = None
+            market_context = ""
+            if TAVILY_API_KEY or NEVERMINED_AVAILABLE:
+                _log("Detecting missing intelligence...")
+                _log("Searching market intelligence providers...")
                 market_data = research_market(normalized.get("address", ""))
+                _source = market_data.get("intelligence_source", "none") if market_data else "none"
+                if _source == "nevermined":
+                    _purchases = market_data.get("purchases", [])
+                    if _purchases:
+                        _p = _purchases[0]
+                        _log(f"Selected provider: {_p.get('provider_name', 'Unknown')} (${_p.get('cost', 0):.2f})")
+                        _log("Executing payment via Nevermined")
+                    _log("Intelligence received")
+                elif _source == "tavily":
+                    _log("Using Tavily market research (fallback)")
+                _log("Running market analysis")
                 market_context = format_market_context(market_data)
 
-        with st.spinner("Generating investment memo..."):
+            _log("Generating investment memo")
             memo = generate_memo(normalized, financials, scenarios, leverage, market_context)
+
+            _log("Publishing report to Intelligence API")
+            _status.update(label="Analysis complete", state="complete", expanded=False)
 
     # Store to Neo4j knowledge graph
     intelligence_purchases = []
@@ -417,6 +487,49 @@ if "results" in st.session_state:
             st.info("Market intelligence unavailable — set TAVILY_API_KEY or NEVERMINED_API_KEY.")
         else:
             st.info("No market data available for this property.")
+
+        # --- Sponsored Intelligence ---
+        if ZEROCLICK_AVAILABLE:
+            try:
+                _address = normalized.get("address", "")
+                _city = _address.split(",")[0].strip() if "," in _address else _address
+                _intel_offers = fetch_offers(
+                    query=f"multifamily investment tools {_city}",
+                    context=f"Real estate deal analysis for {_address}, multifamily underwriting",
+                    limit=3,
+                )
+                if _intel_offers:
+                    st.markdown("---")
+                    st.caption("Sponsored Intelligence")
+                    _cols = st.columns(len(_intel_offers))
+                    for _idx, _offer in enumerate(_intel_offers):
+                        with _cols[_idx]:
+                            _title = _offer.get("title", "")
+                            _subtitle = _offer.get("subtitle", "")
+                            _content = _offer.get("content", "")
+                            _cta = _offer.get("cta", "Learn More")
+                            _url = _offer.get("click_url", "")
+                            _brand = _offer.get("brand", "")
+                            _img = _offer.get("image_url", "")
+                            _html = '<div style="border:1px solid #333; border-radius:8px; padding:12px; height:100%;">'
+                            if _img:
+                                _html += f'<img src="{_img}" style="width:100%; border-radius:4px; margin-bottom:8px;" />'
+                            _html += f'<strong>{_title}</strong>'
+                            if _subtitle:
+                                _html += f'<br><span style="color:#aaa; font-size:0.85em;">{_subtitle}</span>'
+                            if _content:
+                                _html += f'<br><span style="font-size:0.9em;">{_content[:120]}</span>'
+                            if _brand:
+                                _html += f'<br><em style="color:#888; font-size:0.8em;">{_brand}</em>'
+                            if _url:
+                                _html += f'<br><a href="{_url}" target="_blank" style="color:#4A9EFF;">{_cta}</a>'
+                            _html += '</div>'
+                            st.markdown(_html, unsafe_allow_html=True)
+                    _offer_ids = [o.get("id") for o in _intel_offers if o.get("id")]
+                    if _offer_ids:
+                        track_impression(_offer_ids)
+            except Exception:
+                pass
 
     with tab4:
         st.subheader("Negotiation Leverage Points")

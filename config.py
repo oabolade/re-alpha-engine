@@ -20,6 +20,9 @@ APIFY_API_KEY = os.getenv("APIFY_API_KEY", "")
 # Exa — deep research
 EXA_API_KEY = os.getenv("EXA_API_KEY", "")
 
+# ZeroClick — AI-native ads
+ZEROCLICK_API_KEY = os.getenv("ZEROCLICK_API_KEY", "")
+
 # AWS — storage & deployment
 AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET", "")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")

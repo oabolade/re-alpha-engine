@@ -6,6 +6,7 @@ Supports two backends:
 """
 
 import json
+import re
 import base64
 import httpx
 import anthropic
@@ -55,14 +56,26 @@ Required JSON structure:
 def extract_from_pdf(pdf_path: str) -> dict:
     """Extract structured OM data from a PDF. Uses Reka if available, else Claude."""
     if REKA_API_KEY:
-        return _extract_pdf_reka(pdf_path)
+        try:
+            return _extract_pdf_reka(pdf_path)
+        except Exception as e:
+            print(f"[PDF Extractor] Reka failed ({e}), falling back to Claude.")
+            if ANTHROPIC_API_KEY:
+                return _extract_pdf_claude(pdf_path)
+            raise
     return _extract_pdf_claude(pdf_path)
 
 
 def extract_from_text(text_content: str) -> dict:
     """Extract structured data from pasted OM text."""
     if REKA_API_KEY:
-        return _extract_text_reka(text_content)
+        try:
+            return _extract_text_reka(text_content)
+        except Exception as e:
+            print(f"[PDF Extractor] Reka failed ({e}), falling back to Claude.")
+            if ANTHROPIC_API_KEY:
+                return _extract_text_claude(text_content)
+            raise
     return _extract_text_claude(text_content)
 
 
@@ -77,7 +90,7 @@ def _extract_pdf_claude(pdf_path: str) -> dict:
 
     response = client.messages.create(
         model=CLAUDE_MODEL,
-        max_tokens=4096,
+        max_tokens=16384,
         messages=[
             {
                 "role": "user",
@@ -109,7 +122,7 @@ def _extract_text_claude(text_content: str) -> dict:
 
     response = client.messages.create(
         model=CLAUDE_MODEL,
-        max_tokens=4096,
+        max_tokens=16384,
         messages=[
             {
                 "role": "user",
@@ -135,8 +148,9 @@ def _reka_chat(messages: list[dict], model: str = "reka-flash") -> str:
         json={
             "model": model,
             "messages": messages,
+            "max_new_tokens": 8192,
         },
-        timeout=120.0,
+        timeout=300.0,
     )
     response.raise_for_status()
     data = response.json()
@@ -187,12 +201,134 @@ def _extract_text_reka(text_content: str) -> dict:
 
 
 def _parse_json_response(raw_text: str) -> dict:
-    """Parse JSON from API response, handling markdown code fences."""
+    """Parse JSON from API response, handling markdown fences and truncation."""
     text = raw_text.strip()
+
+    # Strip markdown code fences
     if text.startswith("```"):
         lines = text.split("\n")
         lines = lines[1:]  # remove opening fence
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         text = "\n".join(lines)
-    return json.loads(text)
+
+    # Try direct parse first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Extract the largest JSON object from the text
+    match = re.search(r"\{", text)
+    if match:
+        text = text[match.start():]
+
+    # Try parsing again after trimming
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Attempt to repair truncated JSON by closing open structures
+    repaired = _repair_truncated_json(text)
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Failed to parse extraction response as JSON. "
+            f"The model returned text that could not be parsed even after repair. "
+            f"Raw response starts with: {raw_text[:200]!r}... "
+            f"Parse error: {e}"
+        )
+
+
+def _repair_truncated_json(text: str) -> str:
+    """Attempt to repair truncated JSON by finding the last valid structure point."""
+    # Walk the string tracking structural state
+    in_string = False
+    escape_next = False
+    stack = []  # track open { and [
+    last_complete_pos = 0  # position after last complete value
+
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if escape_next:
+            escape_next = False
+            i += 1
+            continue
+        if ch == "\\":
+            if in_string:
+                escape_next = True
+            i += 1
+            continue
+        if ch == '"':
+            in_string = not in_string
+            i += 1
+            continue
+        if in_string:
+            i += 1
+            continue
+
+        # Outside string
+        if ch == "{":
+            stack.append("{")
+        elif ch == "[":
+            stack.append("[")
+        elif ch == "}":
+            if stack and stack[-1] == "{":
+                stack.pop()
+                last_complete_pos = i + 1
+        elif ch == "]":
+            if stack and stack[-1] == "[":
+                stack.pop()
+                last_complete_pos = i + 1
+        elif ch in "0123456789":
+            # skip past number
+            j = i
+            while j < len(text) and text[j] in "0123456789.eE+-":
+                j += 1
+            last_complete_pos = j
+            i = j
+            continue
+        elif text[i:i+4] in ("true", "null"):
+            last_complete_pos = i + 4
+        elif text[i:i+5] == "false":
+            last_complete_pos = i + 5
+
+        i += 1
+
+    # If we ended inside a string or with unclosed structures, truncate to last good point
+    if not stack and not in_string:
+        return text  # already valid structurally
+
+    # Truncate to last complete value, then close remaining structures
+    truncated = text[:last_complete_pos].rstrip().rstrip(",")
+
+    # Recount what's still open after truncation
+    open_stack = []
+    in_str = False
+    esc = False
+    for ch in truncated:
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            if in_str:
+                esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            open_stack.append("}")
+        elif ch == "[":
+            open_stack.append("]")
+        elif ch in "}]" and open_stack:
+            open_stack.pop()
+
+    # Close in reverse order
+    truncated += "".join(reversed(open_stack))
+    return truncated
